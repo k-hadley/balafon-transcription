@@ -13,6 +13,9 @@
   Once finished uploading, switch the plug to the Native USB Port 
   (closest to the reset button on the Arduino) to receive data to the computer.
 
+  Calibration Mode will stop data transmission and use the LEDs to see when keystrikes are detected.
+  Data Mode will send the timestamped X, Y, and Z data from all accelerometers along with the microphone signal.
+
   In Calibrate mode, if the LEDs are turning on too often or not often enough, 
   adjust the sensitivity of the strike detection in the "Mode Switch" section 
   by raising or lowering the "threshold" value.
@@ -43,19 +46,6 @@ uint8_t data_switch = 0;
 uint8_t cs_pins[NUM_KEYS] = {0};
 const uint32_t spi_clock = 5000000;
 Adafruit_LIS3DH accels[NUM_KEYS];
-
-// -------- debugging on oscilloscope -----------
-#define DEBUG 0
-/* Debug levels: 
-   0 = data only (running mode);
-   1 = flag pins and data;
-   2 = print setup messages, data, flag pins;
-   3 = no data, only LED messages and flag pins;
-   4 = only mic data and flag pins
-*/
-#define FLAG_PIN1 10
-#define FLAG_PIN2 11
-#define FLAG_PIN3 12
 
 // --------- For data printing -----------------
 #define USB_BUFFER_LENGTH 2048
@@ -99,11 +89,6 @@ void led_init(void);
 
 
 void setup(void) {
-  // Initialise debugging pins
-  pinMode(FLAG_PIN1, OUTPUT);
-  pinMode(FLAG_PIN2, OUTPUT);
-  pinMode(FLAG_PIN3, OUTPUT);
-
   pinMode(microphonePin, INPUT);
   pinMode(SWITCH_PIN, INPUT_PULLUP);
   pinMode(SWITCH_LED, OUTPUT);
@@ -112,8 +97,6 @@ void setup(void) {
   SerialUSB.begin(2000000);
 
   while (!SerialUSB) delay(10);  // pause until serial console opens
-
-  if (DEBUG>1) SerialUSB.println("LIS3DH test!");
 
   // Initialise accelerometers
   for(unsigned int i = 0; i < NUM_KEYS; i++) {
@@ -127,20 +110,12 @@ void setup(void) {
   data_switch = digitalRead(SWITCH_PIN);
   digitalWrite(SWITCH_LED, data_switch);
 
-  if (DEBUG>1) {
-    SerialUSB.print("Current mode: ");
-    SerialUSB.print(data_switch);
-    SerialUSB.println(", where 0 = fast data collection and 1 = calibration with LEDs");
-  }
+  SerialUSB.println("Timestamp, Sensor number, X acceleration, Y acceleration, Z acceleration, Mic signal");
 
-  if (DEBUG<3) SerialUSB.println("Timestamp, Sensor number, X acceleration, Y acceleration, Z acceleration, Mic signal");
-
-  // Turn on all LEDs to check that the program is running
+  // Turn on all LEDs for 1 second to check that the program is running
   led_init();
   delay(1000);
   reset_leds();
-
-  digitalWrite(FLAG_PIN1, LOW); // setup is complete
 
   first_timestamp = micros();
 }
@@ -152,9 +127,7 @@ void loop() {
   timestamp = micros();
 
   // get a new sensor event, normalized (units m/s)
-  if (DEBUG) digitalWrite(FLAG_PIN1, HIGH);
   accels[sensor_num].read();
-  if (DEBUG) digitalWrite(FLAG_PIN1, LOW);
 
   mic_signal = analogRead(microphonePin);
 
@@ -162,10 +135,6 @@ void loop() {
   if (flip) {
     flip = 0;
     data_switch = digitalRead(SWITCH_PIN);
-    if (DEBUG > 1) {
-      SerialUSB.print("New mode: ");
-      SerialUSB.println(data_switch);
-    }
 
     if (!data_switch) {
       // when exiting calibration mode, turn off the currently lit LED
@@ -176,7 +145,7 @@ void loop() {
   }
   
 
-  // If switched, to Calibrate Mode, turn on the LED corresponding to the most recently struck key
+  // If switched to Calibrate Mode, turn on the LED corresponding to the most recently struck key
   if (data_switch) {
     strike_size = sqrt((accels[sensor_num].x)*(accels[sensor_num].x) + (accels[sensor_num].y)*(accels[sensor_num].y) + (accels[sensor_num].z)*(accels[sensor_num].z)); // subtract g, mind units
 
@@ -186,17 +155,13 @@ void loop() {
       active_led = cs_pins[sensor_num];
       led_on(active_led);
     }
+  } 
+  else { 
+    // When in Data Mode, send data over serial
+    print_data_csv(timestamp-first_timestamp, cs_pins[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
   }
 
-  // Send data over serial
-  if (DEBUG) digitalWrite(FLAG_PIN2, HIGH);
-  if (DEBUG < 3) print_data_csv(timestamp-first_timestamp, cs_pins[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
-  else if (DEBUG == 4) {
-    SerialUSB.println(mic_signal);
-    delay(2);
-  }
-  if (DEBUG) digitalWrite(FLAG_PIN2, LOW);
-
+  // Increment to poll the next sensor
   if(++sensor_num >= NUM_KEYS)
     sensor_num = 0;
 
@@ -206,16 +171,10 @@ void loop() {
 
 // Setup routine for each accelerometer
 void lis3dh_setup(Adafruit_LIS3DH *any_sensor, uint8_t i) {
-  if (DEBUG>1) {
-    SerialUSB.print("initializing sensor "); SerialUSB.print(i+1); SerialUSB.print(" of "); SerialUSB.println(NUM_KEYS);
-  }
-
   if (!any_sensor->begin(0x18)) { 
-    SerialUSB.print("Error: Couldn't start sensor "); SerialUSB.print(i+1); SerialUSB.print(" of "); SerialUSB.println(NUM_KEYS);
+    SerialUSB.print("Error: Couldn't start sensor number "); SerialUSB.print(i);
   } 
   else {
-    if (DEBUG>1) SerialUSB.println("LIS3DH found!");
-
     any_sensor->setRange(LIS3DH_RANGE_16_G);  // 2, 4, 8 or 16 G
     any_sensor->setDataRate(LIS3DH_DATARATE_LOWPOWER_5KHZ); // options: 1,10,25,50,100,200,400,LOWPOWER_1K6HZ,LOWPOWER_5KHZ
   }
@@ -238,19 +197,13 @@ void print_data_csv(unsigned time, uint8_t sensor, int x, int y, int z, int audi
   usbBufferPointer += printLength;
   if(USB_BUFFER_LENGTH - usbBufferPointer < maxStringLength + 1) {
     // (the +1 is to allow for the trailing '\0')
-    if (DEBUG) digitalWrite(FLAG_PIN3, HIGH);
     SerialUSB.print(usbBuffer);
-    if (DEBUG) digitalWrite(FLAG_PIN3, LOW);
     usbBufferPointer = 0;
   }
 }
 
 // Turn on a single LED corresponding to a key
 void led_on(int led) {
-  if (DEBUG==3) {
-    SerialUSB.print("turning on led "); SerialUSB.println(led);
-  }
-  
   if (led <= 7) {
     digitalWrite(row_0, HIGH);
   } else if (led <= 15) {
@@ -292,10 +245,6 @@ void led_on(int led) {
 
 // Turn off a single LED corresponding to a key
 void led_off(int led) {
-  if (DEBUG==3) {
-    SerialUSB.print("turning off led "); SerialUSB.println(led);
-  }
-
   if (led <= 7) {
     digitalWrite(row_0, LOW);
   } else if (led <= 15) {
