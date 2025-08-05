@@ -2,20 +2,19 @@
 // By Katelyn Hadley and Andrew McPherson
 
 /*** Instructions for use: ***
-  Before uploading this code to the Arduino Due, input which keys are being used 
-  into the "Accelerometer Wiring" section:
-  - enter the sensor number corresponding to the lowest-numbered key being recorded
-  - enter how many total keys will be used, including the lowest-numbered key and continuing upward
-
-  Next, upload the program to the Arduino Due's Programming Port 
+  Upload the program to the Arduino Due's Programming Port 
   (the micro USB plug closest to the power jack).
 
   Once finished uploading, switch the plug to the Native USB Port 
   (closest to the reset button on the Arduino) to receive data to the computer.
 
-  In Calibrate mode, if the LEDs are turning on too often or not often enough, 
+  Fine-tuning options:
+
+ - In Calibrate mode, if the LEDs are turning on too often or not often enough, 
   adjust the sensitivity of the strike detection in the "Mode Switch" section 
   by raising or lowering the "threshold" value.
+ - The program's efficiency can be slightly increased by defining the total 
+  number of keys to record within the "Accelerometer Wiring" section below.
 */
 
 #include <SPI.h>
@@ -23,12 +22,11 @@
 #include <Adafruit_Sensor.h>
 
 // -------- Accelerometer Wiring --------
-// ***** Note to user: keep this section up to date **********
+// Optional: Increase efficiency of the program by entering the number of 
+// balafon keys that have a sensor attached
 
-// Define a continuous range of keys to enable by noting the lowest key number (0 through 23) 
-// and number of subsequent keys to turn on
-const uint8_t lowest_key = 1;
-#define NUM_KEYS 19  // Total number of sequential keys to record, starting from and including the lowest-numbered key in the set
+#define NUM_KEYS 24  // Total number of keys to record (default = 24)
+#define MAX_KEYS 24  // Maximum number of ports (8 * number of breakout boards; default = 24)
 
 // ----------- Mode Switch ----------------------
 const int threshold = 5000;
@@ -37,12 +35,6 @@ const int threshold = 5000;
 int strike_size = 0;
 volatile uint8_t flip = 0;
 uint8_t data_switch = 0;
-
-// ----------- SPI setup -------------------
-#define CS_BASE_PIN 30 // Pin 30 defined on PCB as accelerometer number 0 - DO NOT CHANGE
-uint8_t cs_pins[NUM_KEYS] = {0};
-const uint32_t spi_clock = 5000000;
-Adafruit_LIS3DH accels[NUM_KEYS];
 
 // -------- debugging on oscilloscope -----------
 #define DEBUG 0
@@ -57,6 +49,13 @@ Adafruit_LIS3DH accels[NUM_KEYS];
 #define FLAG_PIN2 11
 #define FLAG_PIN3 12
 
+// ----------- SPI setup -------------------
+#define CS_BASE_PIN 30 // Pin 30 defined on PCB as accelerometer number 0 - DO NOT CHANGE
+uint8_t cs_sensornums[NUM_KEYS] = {0};
+const uint32_t spi_clock = 5000000;
+Adafruit_LIS3DH accels[NUM_KEYS];
+volatile uint8_t connected_keys = 0; // total number of keys that have successfully connected to Arduino so far
+
 // --------- For data printing -----------------
 #define USB_BUFFER_LENGTH 2048
 char usbBuffer[USB_BUFFER_LENGTH] = {0};
@@ -67,7 +66,7 @@ unsigned timestamp = 0;
 unsigned first_timestamp = 0;
 
 // ------ Variables for getting data ------------
-volatile uint8_t sensor_num = 0;
+volatile uint8_t sensor_num = 0; // Only used for looping through array of sensors - value does not necessarily correspond to key number
 sensors_event_t event;
 
 // ------ Microphone (for audio sync) -----------
@@ -90,7 +89,7 @@ const int column_6 = A9;
 const int column_7 = A10;
 
 // ----------- Functions ------------------------
-void lis3dh_setup(Adafruit_LIS3DH *any_sensor, uint8_t i);
+uint8_t lis3dh_setup(Adafruit_LIS3DH *any_sensor, uint8_t i);
 void print_data_csv(unsigned time, uint8_t sensor, int x, int y, int z, int audio);
 void led_on(int led);
 void led_off(int led);
@@ -113,25 +112,27 @@ void setup(void) {
 
   while (!SerialUSB) delay(10);  // pause until serial console opens
 
-  if (DEBUG>1) SerialUSB.println("LIS3DH test!");
-
   // Initialise accelerometers
-  for(unsigned int i = 0; i < NUM_KEYS; i++) {
-    cs_pins[i] = lowest_key + i;
-    accels[i] = Adafruit_LIS3DH(CS_BASE_PIN + cs_pins[i], &SPI, spi_clock);
-    lis3dh_setup(&accels[i], i);
+  SerialUSB.println("Connecting to sensor ports: ");
+  Adafruit_LIS3DH accel_loop;
+  for(unsigned int i = 0; ((i < MAX_KEYS) && (connected_keys < NUM_KEYS)); i++) {
+    SerialUSB.print(i);
+    accel_loop = Adafruit_LIS3DH(CS_BASE_PIN + i, &SPI, spi_clock);
+    
+    // Only save sensors (to poll later) if they successfully connect
+    if (lis3dh_setup(&accel_loop, i)) { 
+      cs_sensornums[connected_keys] = i;
+      accels[connected_keys] = accel_loop;
+      SerialUSB.println("\t Connected"); 
+      connected_keys++;
+    } else SerialUSB.println("\t no connection"); 
   }
+  SerialUSB.println("Sensor connections complete");
 
   // Set up data mode switch for enabling/disabling calibration with LEDs
   attachInterrupt(digitalPinToInterrupt(SWITCH_PIN), switch_flip, CHANGE);
   data_switch = digitalRead(SWITCH_PIN);
   digitalWrite(SWITCH_LED, data_switch);
-
-  if (DEBUG>1) {
-    SerialUSB.print("Current mode: ");
-    SerialUSB.print(data_switch);
-    SerialUSB.println(", where 0 = fast data collection and 1 = calibration with LEDs");
-  }
 
   if (DEBUG<3) SerialUSB.println("Timestamp, Sensor number, X acceleration, Y acceleration, Z acceleration, Mic signal");
 
@@ -183,21 +184,23 @@ void loop() {
     if (strike_size > threshold) {
       // Switch LED from previous to current key strike
       led_off(active_led);
-      active_led = cs_pins[sensor_num];
+      active_led = cs_sensornums[sensor_num];
       led_on(active_led);
     }
+  } else { // When in Data Mode, send data over serial
+    if (DEBUG) digitalWrite(FLAG_PIN2, HIGH);
+
+    if (DEBUG < 3) print_data_csv(timestamp-first_timestamp, cs_sensornums[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
+    else if (DEBUG == 4) {
+      SerialUSB.println(mic_signal);
+      delay(2);
+    }
+
+    if (DEBUG) digitalWrite(FLAG_PIN2, LOW);
   }
 
-  // Send data over serial
-  if (DEBUG) digitalWrite(FLAG_PIN2, HIGH);
-  if (DEBUG < 3) print_data_csv(timestamp-first_timestamp, cs_pins[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
-  else if (DEBUG == 4) {
-    SerialUSB.println(mic_signal);
-    delay(2);
-  }
-  if (DEBUG) digitalWrite(FLAG_PIN2, LOW);
-
-  if(++sensor_num >= NUM_KEYS)
+  // Increment to poll the next sensor
+  if(++sensor_num >= connected_keys)
     sensor_num = 0;
 
 }
@@ -205,19 +208,14 @@ void loop() {
 // --------- Functions -----------
 
 // Setup routine for each accelerometer
-void lis3dh_setup(Adafruit_LIS3DH *any_sensor, uint8_t i) {
-  if (DEBUG>1) {
-    SerialUSB.print("initializing sensor "); SerialUSB.print(i+1); SerialUSB.print(" of "); SerialUSB.println(NUM_KEYS);
-  }
-
+uint8_t lis3dh_setup(Adafruit_LIS3DH *any_sensor, uint8_t a) {
   if (!any_sensor->begin(0x18)) { 
-    SerialUSB.print("Error: Couldn't start sensor "); SerialUSB.print(i+1); SerialUSB.print(" of "); SerialUSB.println(NUM_KEYS);
+    return 0;
   } 
   else {
-    if (DEBUG>1) SerialUSB.println("LIS3DH found!");
-
     any_sensor->setRange(LIS3DH_RANGE_16_G);  // 2, 4, 8 or 16 G
     any_sensor->setDataRate(LIS3DH_DATARATE_LOWPOWER_5KHZ); // options: 1,10,25,50,100,200,400,LOWPOWER_1K6HZ,LOWPOWER_5KHZ
+    return 1;
   }
 }
 
