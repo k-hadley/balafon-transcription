@@ -10,7 +10,7 @@ There's an address selection pin so you can have two accelerometers share an I2C
 
 Adafruit invests time and resources providing this open source code, please support Adafruit and open-source hardware by purchasing products from Adafruit!
 
-Written by Kevin Townsend/Limor Fried for Adafruit Industries.  
+Written by Kevin Townsend/Limor Fried for Adafruit Industries; edited by Katelyn Hadley and Andrew McPherson to support the Balafon Transcription System.  
 BSD license, check license.txt for more information
 All text above must be included in any redistribution
 
