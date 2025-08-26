@@ -1,7 +1,7 @@
 /*!
  *  @file Adafruit_LIS3DH.h
  *
- *  This is a library for the Adafruit LIS3DH Accel breakout board
+ *  This is a library for the LIS3DH Accelerometer used in the Balafon Transcription System
  *
  *  Designed specifically to work with the Adafruit LIS3DH Triple-Axis
  *Accelerometer
