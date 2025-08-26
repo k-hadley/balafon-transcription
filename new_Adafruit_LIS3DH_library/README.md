@@ -14,4 +14,4 @@ Written by Kevin Townsend/Limor Fried for Adafruit Industries; edited by Katelyn
 BSD license, check license.txt for more information
 All text above must be included in any redistribution
 
-To install, use the Arduino Library Manager and search for "Adafruit LIS3DH" and install the library.
+To install, download this folder and move it to the "Arduino/libraries" folder on your computer.
