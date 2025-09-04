@@ -2,19 +2,21 @@
 // By Katelyn Hadley and Andrew McPherson
 
 /*** Instructions for use: ***
+  Optional setup before uploading: 
+  - Enter the number of balafon keys and available breakout board ports 
+  in the "Accelerometer Wiring" section below to increase the program's efficiency.
+  - After testing Calibrate mode, if the LEDs are turning on too often or not often enough, 
+  adjust the sensitivity of the strike detection in the "Mode Switch" section 
+  by raising or lowering the "threshold" value.
+
+  QUICK START:
+
   Upload the program to the Arduino Due's Programming Port 
   (the micro USB plug closest to the power jack).
 
   Once finished uploading, switch the plug to the Native USB Port 
   (closest to the reset button on the Arduino) to receive data to the computer.
-
-  Fine-tuning options:
-
- - In Calibrate mode, if the LEDs are turning on too often or not often enough, 
-  adjust the sensitivity of the strike detection in the "Mode Switch" section 
-  by raising or lowering the "threshold" value.
- - The program's efficiency can be slightly increased by defining the total 
-  number of keys to record within the "Accelerometer Wiring" section below.
+  
 */
 
 #include <SPI.h>
@@ -51,7 +53,7 @@ uint8_t data_switch = 0;
 
 // ----------- SPI setup -------------------
 #define CS_BASE_PIN 30 // Pin 30 defined on PCB as accelerometer number 0 - DO NOT CHANGE
-uint8_t cs_sensornums[NUM_KEYS] = {0};
+uint8_t cs_portnums[NUM_KEYS] = {0};
 const uint32_t spi_clock = 5000000;
 Adafruit_LIS3DH accels[NUM_KEYS];
 volatile uint8_t connected_keys = 0; // total number of keys that have successfully connected to Arduino so far
@@ -121,7 +123,7 @@ void setup(void) {
     
     // Only save sensors (to poll later) if they successfully connect
     if (lis3dh_setup(&accel_loop, i)) { 
-      cs_sensornums[connected_keys] = i;
+      cs_portnums[connected_keys] = i;
       accels[connected_keys] = accel_loop;
       SerialUSB.println("\t Connected"); 
       connected_keys++;
@@ -134,7 +136,7 @@ void setup(void) {
   data_switch = digitalRead(SWITCH_PIN);
   digitalWrite(SWITCH_LED, data_switch);
 
-  if (DEBUG<3) SerialUSB.println("Timestamp, Sensor number, X acceleration, Y acceleration, Z acceleration, Mic signal");
+  if (DEBUG<3) SerialUSB.println("Timestamp, Sensor port number, X acceleration, Y acceleration, Z acceleration, Mic signal");
 
   // Turn on all LEDs to check that the program is running
   led_init();
@@ -162,6 +164,7 @@ void loop() {
   // Check whether the calibration/data mode switch has been flipped
   if (flip) {
     flip = 0;
+    reset_leds();
     data_switch = digitalRead(SWITCH_PIN);
     if (DEBUG > 1) {
       SerialUSB.print("New mode: ");
@@ -169,9 +172,11 @@ void loop() {
     }
 
     if (!data_switch) {
-      // when exiting calibration mode, turn off the currently lit LED
-      led_off(active_led);
-    }
+      // when entering data mode, turn on LEDs for all connected sensors to visually see which ones are collecting data
+      for(unsigned int i = 0; i < connected_keys; i++) {
+        led_on(cs_portnums[i]);
+      }
+    } 
     
     digitalWrite(SWITCH_LED, data_switch);
   }
@@ -184,13 +189,13 @@ void loop() {
     if (strike_size > threshold) {
       // Switch LED from previous to current key strike
       led_off(active_led);
-      active_led = cs_sensornums[sensor_num];
+      active_led = cs_portnums[sensor_num];
       led_on(active_led);
     }
   } else { // When in Data Mode, send data over serial
     if (DEBUG) digitalWrite(FLAG_PIN2, HIGH);
 
-    if (DEBUG < 3) print_data_csv(timestamp-first_timestamp, cs_sensornums[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
+    if (DEBUG < 3) print_data_csv(timestamp-first_timestamp, cs_portnums[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
     else if (DEBUG == 4) {
       SerialUSB.println(mic_signal);
       delay(2);
