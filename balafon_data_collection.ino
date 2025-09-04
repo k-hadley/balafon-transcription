@@ -91,7 +91,7 @@ const int column_6 = A9;
 const int column_7 = A10;
 
 // ----------- Functions ------------------------
-uint8_t lis3dh_setup(Adafruit_LIS3DH *any_sensor, uint8_t i);
+uint8_t lis3dh_setup(Adafruit_LIS3DH *any_sensor);
 void print_data_csv(unsigned time, uint8_t sensor, int x, int y, int z, int audio);
 void led_on(int led);
 void led_off(int led);
@@ -115,14 +115,15 @@ void setup(void) {
   while (!SerialUSB) delay(10);  // pause until serial console opens
 
   // Initialise accelerometers
-  SerialUSB.println("Connecting to sensor ports: ");
+  SerialUSB.println("\nInitializing Balafon Transcription Data Collection System. If not connected to sensors within 3 seconds, press the Arduino's Reset button or unplug from computer and try again.\n");
+  SerialUSB.println("Connecting to sensor ports:");
   Adafruit_LIS3DH accel_loop;
   for(unsigned int i = 0; ((i < MAX_KEYS) && (connected_keys < NUM_KEYS)); i++) {
     SerialUSB.print(i);
     accel_loop = Adafruit_LIS3DH(CS_BASE_PIN + i, &SPI, spi_clock);
     
     // Only save sensors (to poll later) if they successfully connect
-    if (lis3dh_setup(&accel_loop, i)) { 
+    if (lis3dh_setup(&accel_loop)) { 
       cs_portnums[connected_keys] = i;
       accels[connected_keys] = accel_loop;
       SerialUSB.println("\t Connected"); 
@@ -213,7 +214,7 @@ void loop() {
 // --------- Functions -----------
 
 // Setup routine for each accelerometer
-uint8_t lis3dh_setup(Adafruit_LIS3DH *any_sensor, uint8_t a) {
+uint8_t lis3dh_setup(Adafruit_LIS3DH *any_sensor) {
   if (!any_sensor->begin(0x18)) { 
     return 0;
   } 
