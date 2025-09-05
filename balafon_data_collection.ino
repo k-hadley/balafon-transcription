@@ -7,15 +7,13 @@
   in the "Accelerometer Wiring" section below to increase the program's efficiency.
   - After testing Calibrate mode, if the LEDs are turning on too often or not often enough, 
   adjust the sensitivity of the strike detection in the "Mode Switch" section 
-  by raising or lowering the "threshold" value.
+  by raising or lowering the "THRESHOLD" value.
 
-  QUICK START:
-
-  Upload the program to the Arduino Due's Programming Port 
-  (the micro USB plug closest to the power jack).
-
-  Once finished uploading, switch the plug to the Native USB Port 
-  (closest to the reset button on the Arduino) to receive data to the computer.
+  Quick Start:
+  1. Upload the program to the Arduino Due's Programming Port 
+     (the micro USB plug closest to the power jack).
+  2. Once finished uploading, switch the plug to the Native USB Port 
+     (closest to the reset button on the Arduino) to receive data to the computer.
   
 */
 
@@ -24,61 +22,51 @@
 #include <Adafruit_Sensor.h>
 
 // -------- Accelerometer Wiring --------
-// Optional: Increase efficiency of the program by entering the number of 
-// balafon keys that have a sensor attached
+// Optional: Increase efficiency of the program (decrease memory usage of variables) 
+// by entering the number of balafon keys that have a sensor attached
 
 #define NUM_KEYS 24  // Total number of keys to record (default = 24)
 #define MAX_KEYS 24  // Maximum number of ports (8 * number of breakout boards; default = 24)
 
-// ----------- Mode Switch ----------------------
-const int threshold = 5000;
-#define SWITCH_PIN 7
-#define SWITCH_LED 8
-int strike_size = 0;
-volatile uint8_t flip = 0;
-uint8_t data_switch = 0;
+// ----------- Mode Switch ----------------
+#define THRESHOLD 5000 // Optional: adjust sensitivity of the strike detection in Calibrate mode
+int strike_size = 0;   // For calculating whether the acceleration of a keystrike was above the threshold
 
-// -------- debugging on oscilloscope -----------
-#define DEBUG 0
-/* Debug levels: 
-   0 = data only (running mode);
-   1 = flag pins and data;
-   2 = print setup messages, data, flag pins;
-   3 = no data, only LED messages and flag pins;
-   4 = only mic data and flag pins
-*/
-#define FLAG_PIN1 10
-#define FLAG_PIN2 11
-#define FLAG_PIN3 12
+#define SWITCH_PIN 7  // Defined on PCB - Do not change
+#define SWITCH_LED 8  // Defined on PCB - Do not change
+volatile uint8_t flip = 0; // Interrupt flag for checking if Mode Switch was flipped
+uint8_t data_switch = 0;   // Current status of  Mode Switch
 
 // ----------- SPI setup -------------------
-#define CS_BASE_PIN 30 // Pin 30 defined on PCB as accelerometer number 0 - DO NOT CHANGE
-uint8_t cs_portnums[NUM_KEYS] = {0};
 const uint32_t spi_clock = 5000000;
+#define CS_BASE_PIN 30 // Arduino Pin 30 is defined on PCB as Chip Select (CS) port number 0 - Do not change
+
+// Variables to store the port numbers & connection info of all successfully connected accelerometers
+uint8_t cs_portnums[NUM_KEYS] = {0}; 
 Adafruit_LIS3DH accels[NUM_KEYS];
 volatile uint8_t connected_keys = 0; // total number of keys that have successfully connected to Arduino so far
 
-// --------- For data printing -----------------
+// --------- Data printing -----------------
 #define USB_BUFFER_LENGTH 2048
-char usbBuffer[USB_BUFFER_LENGTH] = {0};
+char usbBuffer[USB_BUFFER_LENGTH] = {0}; // Data buffer: for sending a large packet of sensor data in each Serial USB transmission
 unsigned int usbBufferPointer = 0;
-uint8_t serialusb_started = 0;
+uint8_t serialusb_started = 0;  // Current status of Serial USB connection (initialized or not)
 
-// ---------- Data timer ---------------------
+// --------- Collecting data -----------------
 unsigned timestamp = 0;
-unsigned first_timestamp = 0;
 
-// ------ Variables for getting data ------------
+// Accelerometer polling
 volatile uint8_t sensor_num = 0; // Only used for looping through array of sensors - value does not necessarily correspond to key number
 sensors_event_t event;
 
-// ------ Microphone (for audio sync) -----------
+// Microphone (for audio sync)
 const int microphonePin = A0;
 int mic_signal = 0;
 
-// --- LED Matrix (pin definitions are permanent on PCB - don't change) ---
+// --------- LED Matrix  --------------
 uint8_t active_led = 0;
 
+// These pin definitions are permanent on the Arduino Shield PCB - Do not change
 const int row_0 = 2;
 const int row_1 = 3;
 const int row_2 = 4;
@@ -101,22 +89,18 @@ void led_init(void);
 
 
 void setup(void) {
-  // Initialise debugging pins
-  pinMode(FLAG_PIN1, OUTPUT);
-  pinMode(FLAG_PIN2, OUTPUT);
-  pinMode(FLAG_PIN3, OUTPUT);
-
+  // Initialize Arduino shield pins
   pinMode(microphonePin, INPUT);
   pinMode(SWITCH_PIN, INPUT_PULLUP);
   pinMode(SWITCH_LED, OUTPUT);
 
-  // Initialise accelerometers
+  // Initialize accelerometers
   Adafruit_LIS3DH accel_loop;
   for(unsigned int i = 0; ((i < MAX_KEYS) && (connected_keys < NUM_KEYS)); i++) {
     SerialUSB.print(i);
     accel_loop = Adafruit_LIS3DH(CS_BASE_PIN + i, &SPI, spi_clock);
     
-    // Only save sensors (to poll later) if they successfully connect
+    // Attempt to connect to each sensor. If it successfully connects, save its connection info to get data later
     if (lis3dh_setup(&accel_loop)) { 
       cs_portnums[connected_keys] = i;
       accels[connected_keys] = accel_loop;
@@ -129,19 +113,16 @@ void setup(void) {
   data_switch = digitalRead(SWITCH_PIN);
   digitalWrite(SWITCH_LED, data_switch);
 
-  // Turn on all LEDs to check that the program is running
+  // Turn on all LEDs to show that the program is running
   led_init();
   delay(1000);
   reset_leds();
-
-  digitalWrite(FLAG_PIN1, LOW); // setup is complete
-
-  first_timestamp = micros();
 }
 
 
 void loop() { 
   // ---------- SET MODE ------------
+
   // Check whether the calibration/data mode switch has been flipped
   if (flip) {
     flip = 0;
@@ -151,22 +132,24 @@ void loop() {
   }
 
   // ---------- CONNECT USB ----------
-  // When entering Data Mode for the first time, start Native USB transmission. Remember to switch to Native USB plug after uploading sketch. Baud rate doesn't matter according to documentation
+
+  // When entering Data Mode for the first time, start Native USB transmission.
   if (!serialusb_started && !data_switch) {
-    SerialUSB.begin(2000000);
+    SerialUSB.begin(2000000); // Baud rate doesn't matter according to Native USB documentation
 
     while (!flip && !SerialUSB) delay(10);  // pause until serial console opens, unless switched back to Calibrate mode
     
     if (!flip && !serialusb_started && SerialUSB) { // Print connection info the first time the USB connection starts
-      SerialUSB.println("\nInitializing Balafon Transcription Data Collection System. If not printing sensor info within 3 seconds, press the Arduino's Reset button or unplug from computer and try again.\n");
+      SerialUSB.println("\n\n Initializing Balafon Transcription Data Collection System. If not printing sensor info within 3 seconds, press the Arduino's Reset button or unplug from computer and try again.\n");
+      
       SerialUSB.print("Connected to sensor ports:");
       for(uint8_t i = 0; i < connected_keys; i++) {
         SerialUSB.print("  ");
         SerialUSB.print(cs_portnums[i]);
       }
-      SerialUSB.println();
 
-      if (DEBUG<3) SerialUSB.println("Timestamp, Sensor port number, X acceleration, Y acceleration, Z acceleration, Mic signal");
+      SerialUSB.println("\nReady to transmit data \n");
+      SerialUSB.println("\nTimestamp, Sensor port number, X acceleration, Y acceleration, Z acceleration, Mic signal");
 
       serialusb_started = 1;
       delay(2000); // Make the message visible onscreen
@@ -180,35 +163,23 @@ void loop() {
   // Cycle through checking each accelerometer
   timestamp = micros();
 
-  // get a new sensor event, normalized (units m/s)
-  if (DEBUG) digitalWrite(FLAG_PIN1, HIGH);
-  accels[sensor_num].read();
-  if (DEBUG) digitalWrite(FLAG_PIN1, LOW);
-
-  mic_signal = analogRead(microphonePin);
+  accels[sensor_num].read();  // get a new sensor event, normalized
+  mic_signal = analogRead(microphonePin); // sample the microphone on the Arduino shield
 
   if (data_switch) { 
-    // In Calibrate Mode, calculate whether a key is vibrating
-    strike_size = sqrt((accels[sensor_num].x)*(accels[sensor_num].x) + (accels[sensor_num].y)*(accels[sensor_num].y) + (accels[sensor_num].z)*(accels[sensor_num].z)); // subtract g, mind units
+    // In Calibrate Mode, calculate the magnitude of acceleration to later determine whether a key is vibrating
+    strike_size = sqrt((accels[sensor_num].x)*(accels[sensor_num].x) + (accels[sensor_num].y)*(accels[sensor_num].y) + (accels[sensor_num].z)*(accels[sensor_num].z));
 
   } else if (serialusb_started) { 
     // In Data Mode, send data over serial
-    if (DEBUG) digitalWrite(FLAG_PIN2, HIGH);
-
-    if (DEBUG < 3) print_data_csv(timestamp-first_timestamp, cs_portnums[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
-    else if (DEBUG == 4) {
-      SerialUSB.println(mic_signal);
-      delay(2);
-    }
-
-    if (DEBUG) digitalWrite(FLAG_PIN2, LOW);
+    print_data_csv(timestamp, cs_portnums[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
   }
 
   // -------- SET LIGHTS ------------
 
   // In Data Mode: Turn on LED of each sensor being checked to visually see which ones are collecting data
   // In Calibrate Mode: Turn on the LED corresponding to the most recently struck key
-  if (!data_switch || (data_switch && (strike_size > threshold))) {
+  if (!data_switch || (data_switch && (strike_size > THRESHOLD))) {
     // Switch LED from previous to current key strike
     led_off(active_led);
     active_led = cs_portnums[sensor_num];
@@ -221,14 +192,16 @@ void loop() {
 
 }
 
-// --------- Functions -----------
+// -------------- FUNCTIONS -----------------
 
 // Setup routine for each accelerometer
 uint8_t lis3dh_setup(Adafruit_LIS3DH *any_sensor) {
+  // Try setting up the sensor connected to a particular CS pin
   if (!any_sensor->begin(0x18)) { 
+    // Sensor does not connect
     return 0;
-  } 
-  else {
+  } else {
+    // Sensor does connect: set to maximum data range and sample rate
     any_sensor->setRange(LIS3DH_RANGE_16_G);  // 2, 4, 8 or 16 G
     any_sensor->setDataRate(LIS3DH_DATARATE_LOWPOWER_5KHZ); // options: 1,10,25,50,100,200,400,LOWPOWER_1K6HZ,LOWPOWER_5KHZ
     return 1;
@@ -252,19 +225,14 @@ void print_data_csv(unsigned time, uint8_t sensor, int x, int y, int z, int audi
   usbBufferPointer += printLength;
   if(USB_BUFFER_LENGTH - usbBufferPointer < maxStringLength + 1) {
     // (the +1 is to allow for the trailing '\0')
-    if (DEBUG) digitalWrite(FLAG_PIN3, HIGH);
     SerialUSB.print(usbBuffer);
-    if (DEBUG) digitalWrite(FLAG_PIN3, LOW);
     usbBufferPointer = 0;
   }
 }
 
 // Turn on a single LED corresponding to a key
 void led_on(int led) {
-  if (DEBUG==3) {
-    SerialUSB.print("turning on led "); SerialUSB.println(led);
-  }
-  
+  // Rows of LED matrix (each corresponding to one CS cable on Arduino Shield PCB)
   if (led <= 7) {
     digitalWrite(row_0, HIGH);
   } else if (led <= 15) {
@@ -273,6 +241,7 @@ void led_on(int led) {
     digitalWrite(row_2, HIGH);
   }
 
+  // Columns of LED matrix
   switch (led % 8) {
     case 0:
       digitalWrite(column_0, LOW);
@@ -306,10 +275,7 @@ void led_on(int led) {
 
 // Turn off a single LED corresponding to a key
 void led_off(int led) {
-  if (DEBUG==3) {
-    SerialUSB.print("turning off led "); SerialUSB.println(led);
-  }
-
+  // Rows of LED matrix (each corresponding to one CS cable on Arduino Shield PCB)
   if (led <= 7) {
     digitalWrite(row_0, LOW);
   } else if (led <= 15) {
@@ -318,6 +284,7 @@ void led_off(int led) {
     digitalWrite(row_2, LOW);
   }
 
+  // Columns of LED matrix
   switch (led % 8) {
     case 0:
       digitalWrite(column_0, HIGH);
@@ -391,7 +358,7 @@ void led_init(void) {
   digitalWrite(column_7, LOW);
 }
 
-// Raise an interrupt flag when the mode switch is flipped
+// Raise an interrupt flag when the Mode switch is flipped
 void switch_flip() {
   flip = 1;
 }
