@@ -62,6 +62,7 @@ volatile uint8_t connected_keys = 0; // total number of keys that have successfu
 #define USB_BUFFER_LENGTH 2048
 char usbBuffer[USB_BUFFER_LENGTH] = {0};
 unsigned int usbBufferPointer = 0;
+uint8_t serialusb_started = 0;
 
 // ---------- Data timer ---------------------
 unsigned timestamp = 0;
@@ -109,14 +110,7 @@ void setup(void) {
   pinMode(SWITCH_PIN, INPUT_PULLUP);
   pinMode(SWITCH_LED, OUTPUT);
 
-  // Initialize Native USB port. Remember to switch to this plug after uploading sketch. Baud rate doesn't matter according to documentation
-  SerialUSB.begin(2000000);
-
-  while (!SerialUSB) delay(10);  // pause until serial console opens
-
   // Initialise accelerometers
-  SerialUSB.println("\nInitializing Balafon Transcription Data Collection System. If not connected to sensors within 3 seconds, press the Arduino's Reset button or unplug from computer and try again.\n");
-  SerialUSB.println("Connecting to sensor ports:");
   Adafruit_LIS3DH accel_loop;
   for(unsigned int i = 0; ((i < MAX_KEYS) && (connected_keys < NUM_KEYS)); i++) {
     SerialUSB.print(i);
@@ -126,18 +120,14 @@ void setup(void) {
     if (lis3dh_setup(&accel_loop)) { 
       cs_portnums[connected_keys] = i;
       accels[connected_keys] = accel_loop;
-      SerialUSB.println("\t Connected"); 
       connected_keys++;
-    } else SerialUSB.println("\t no connection"); 
+    }
   }
-  SerialUSB.println("Sensor connections complete");
 
   // Set up data mode switch for enabling/disabling calibration with LEDs
   attachInterrupt(digitalPinToInterrupt(SWITCH_PIN), switch_flip, CHANGE);
   data_switch = digitalRead(SWITCH_PIN);
   digitalWrite(SWITCH_LED, data_switch);
-
-  if (DEBUG<3) SerialUSB.println("Timestamp, Sensor port number, X acceleration, Y acceleration, Z acceleration, Mic signal");
 
   // Turn on all LEDs to check that the program is running
   led_init();
@@ -150,9 +140,44 @@ void setup(void) {
 }
 
 
-void loop() {  
-  // Cycle through checking each accelerometer
+void loop() { 
+  // ---------- SET MODE ------------
+  // Check whether the calibration/data mode switch has been flipped
+  if (flip) {
+    flip = 0;
+    reset_leds();
+    data_switch = digitalRead(SWITCH_PIN);
+    digitalWrite(SWITCH_LED, data_switch);
+  }
 
+  // ---------- CONNECT USB ----------
+  // When entering Data Mode for the first time, start Native USB transmission. Remember to switch to Native USB plug after uploading sketch. Baud rate doesn't matter according to documentation
+  if (!serialusb_started && !data_switch) {
+    SerialUSB.begin(2000000);
+
+    while (!flip && !SerialUSB) delay(10);  // pause until serial console opens, unless switched back to Calibrate mode
+    
+    if (!flip && !serialusb_started && SerialUSB) { // Print connection info the first time the USB connection starts
+      SerialUSB.println("\nInitializing Balafon Transcription Data Collection System. If not printing sensor info within 3 seconds, press the Arduino's Reset button or unplug from computer and try again.\n");
+      SerialUSB.print("Connected to sensor ports:");
+      for(uint8_t i = 0; i < connected_keys; i++) {
+        SerialUSB.print("  ");
+        SerialUSB.print(cs_portnums[i]);
+      }
+      SerialUSB.println();
+
+      if (DEBUG<3) SerialUSB.println("Timestamp, Sensor port number, X acceleration, Y acceleration, Z acceleration, Mic signal");
+
+      serialusb_started = 1;
+      delay(2000); // Make the message visible onscreen
+    } else { // If the switch was flipped while waiting, continue on in the correct mode
+      data_switch = digitalRead(SWITCH_PIN);
+    }
+  }
+
+  // --------- PROCESS DATA ------------ 
+
+  // Cycle through checking each accelerometer
   timestamp = micros();
 
   // get a new sensor event, normalized (units m/s)
@@ -162,38 +187,12 @@ void loop() {
 
   mic_signal = analogRead(microphonePin);
 
-  // Check whether the calibration/data mode switch has been flipped
-  if (flip) {
-    flip = 0;
-    reset_leds();
-    data_switch = digitalRead(SWITCH_PIN);
-    if (DEBUG > 1) {
-      SerialUSB.print("New mode: ");
-      SerialUSB.println(data_switch);
-    }
-
-    if (!data_switch) {
-      // when entering data mode, turn on LEDs for all connected sensors to visually see which ones are collecting data
-      for(unsigned int i = 0; i < connected_keys; i++) {
-        led_on(cs_portnums[i]);
-      }
-    } 
-    
-    digitalWrite(SWITCH_LED, data_switch);
-  }
-  
-
-  // If switched, to Calibrate Mode, turn on the LED corresponding to the most recently struck key
-  if (data_switch) {
+  if (data_switch) { 
+    // In Calibrate Mode, calculate whether a key is vibrating
     strike_size = sqrt((accels[sensor_num].x)*(accels[sensor_num].x) + (accels[sensor_num].y)*(accels[sensor_num].y) + (accels[sensor_num].z)*(accels[sensor_num].z)); // subtract g, mind units
 
-    if (strike_size > threshold) {
-      // Switch LED from previous to current key strike
-      led_off(active_led);
-      active_led = cs_portnums[sensor_num];
-      led_on(active_led);
-    }
-  } else { // When in Data Mode, send data over serial
+  } else if (serialusb_started) { 
+    // In Data Mode, send data over serial
     if (DEBUG) digitalWrite(FLAG_PIN2, HIGH);
 
     if (DEBUG < 3) print_data_csv(timestamp-first_timestamp, cs_portnums[sensor_num], accels[sensor_num].x, accels[sensor_num].y, accels[sensor_num].z, mic_signal);
@@ -203,6 +202,17 @@ void loop() {
     }
 
     if (DEBUG) digitalWrite(FLAG_PIN2, LOW);
+  }
+
+  // -------- SET LIGHTS ------------
+
+  // In Data Mode: Turn on LED of each sensor being checked to visually see which ones are collecting data
+  // In Calibrate Mode: Turn on the LED corresponding to the most recently struck key
+  if (!data_switch || (data_switch && (strike_size > threshold))) {
+    // Switch LED from previous to current key strike
+    led_off(active_led);
+    active_led = cs_portnums[sensor_num];
+    led_on(active_led);
   }
 
   // Increment to poll the next sensor
