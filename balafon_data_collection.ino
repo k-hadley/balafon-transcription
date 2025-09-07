@@ -163,7 +163,7 @@ void loop() {
   // Cycle through checking each accelerometer
   timestamp = micros();
 
-  accels[sensor_num].read();  // get a new sensor event, normalized
+  accels[sensor_num].read();  // get a new sensor event: raw/unscaled data. See new_Adafruit_LIS3DH.cpp for how to convert to G's afterwards if desired
   mic_signal = analogRead(microphonePin); // sample the microphone on the Arduino shield
 
   if (data_switch) { 
