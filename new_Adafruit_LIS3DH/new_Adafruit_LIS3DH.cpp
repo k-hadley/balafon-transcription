@@ -26,6 +26,8 @@
  *  @section license License
  *
  *  BSD license, all text above must be included in any redistribution
+ *  
+ *  Only the begin() and read() functions have been edited relative to the original library.
  */
 
 #include "Arduino.h"
@@ -141,7 +143,7 @@ bool Adafruit_LIS3DH::begin(uint8_t i2caddr, uint8_t nWAI) {
       i2c_dev, spi_dev, ADDRBIT8_HIGH_TOREAD, LIS3DH_REG_CTRL4, 1);
   _ctrl4.write(0x88); // High res & BDU enabled
 
-  enableDRDY(true, 1);
+  // enableDRDY(true, 1); // Not necessary for Balafon Transcription System
 
   // Turn on orientation config
 
@@ -200,6 +202,8 @@ void Adafruit_LIS3DH::read(void) {
   z = buffer[4];
   z |= ((uint16_t)buffer[5]) << 8;
 
+// NOTE: The following unit conversion is disabled to speed up data collection 
+// for the Balafon Transcription System
 #if 0
   uint8_t range = getRange();
   uint8_t mode = getPerformanceMode();
