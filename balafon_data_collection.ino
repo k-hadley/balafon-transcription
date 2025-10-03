@@ -1,7 +1,13 @@
-// Full-balafon sensor data collection system
-// By Katelyn Hadley and Andrew McPherson
+// Balafon Sensor Data Collection for Transcription System
+
+// Main Author: Katelyn Hadley 
+// Assisted by: Andrew McPherson
+// License: CC BY-SA
 
 /*** Instructions for use: ***
+  If you have not already, visit the User Manual for hardware setup instructions: 
+  https://docs.google.com/document/d/1rZsZTW_g_-hbK4d2u1pkhDDZRovUMO_R9wST9ffC6Lw/
+  
   Optional setup before uploading: 
   - Enter the number of balafon keys and available breakout board ports 
   in the "Accelerometer Wiring" section below to increase the program's efficiency.
