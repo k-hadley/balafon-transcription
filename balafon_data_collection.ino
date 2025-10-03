@@ -19,8 +19,7 @@
   1. Upload the program to the Arduino Due's Programming Port 
      (the micro USB plug closest to the power jack).
   2. Once finished uploading, switch the plug to the Native USB Port 
-     (closest to the reset button on the Arduino) to receive data to the computer.
-  
+     (closest to the reset button on the Arduino) to receive data to the computer. 
 */
 
 #include <SPI.h>
